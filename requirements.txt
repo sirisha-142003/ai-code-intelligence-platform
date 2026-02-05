@@ -6,3 +6,4 @@ scikit-learn
 reportlab
 lizard
 requests
+openai
