@@ -6,14 +6,18 @@ import hashlib
 import csv
 import random
 
+# ===============================
+# GitHub Token (for dataset collection)
+# ===============================
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+headers = {"Authorization": f"token {GITHUB_TOKEN}"} if GITHUB_TOKEN else {}
+
 OUTPUT_DIR = "datasets"
 META_FILE = os.path.join(OUTPUT_DIR, "metadata.csv")
 NUM_FILES_PER_LANG = 2000
 FILES_PER_KEYWORD = 10
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-headers = {"Authorization": f"token {GITHUB_TOKEN}"}
 
 seen_hashes = set()
 if os.path.exists(META_FILE):
@@ -22,7 +26,10 @@ if os.path.exists(META_FILE):
         for row in reader:
             seen_hashes.add(row["content_hash"])
 
-# Keywords for searching repos
+
+# ===============================
+# 🔎 SEARCH API (For Dataset Collection)
+# ===============================
 KEYWORDS = [
     'codeforces', 'leetcode', 'hackerrank', 'codechef', 'codewars',
     "data-structures", "algorithms", "interview-prep",
@@ -37,12 +44,14 @@ KEYWORDS = [
     "university", "practice", "tutorial", "ai"
 ]
 
+
 def search_files(query, per_page=50, page=1):
     url = f"https://api.github.com/search/code?q={query}&per_page={per_page}&page={page}"
     r = requests.get(url, headers=headers)
     if r.status_code == 200:
         return r.json().get("items", [])
     return []
+
 
 def download_file(repo_full_name, path):
     url = f"https://api.github.com/repos/{repo_full_name}/contents/{path}"
@@ -55,10 +64,13 @@ def download_file(repo_full_name, path):
         return base64.b64decode(content).decode("utf-8", errors="ignore")
     return None
 
+
 def collect_files():
     start_time = time.time()
-    collected = {"Python": len([h for h in seen_hashes if h.endswith(".py")]),
-                 "JavaScript": len([h for h in seen_hashes if h.endswith(".js")])}
+    collected = {
+        "Python": 0,
+        "JavaScript": 0
+    }
 
     with open(META_FILE, "a", newline="", encoding="utf-8") as meta:
         writer = csv.writer(meta)
@@ -66,11 +78,9 @@ def collect_files():
             writer.writerow(["local_file", "repo_url", "original_path", "content_hash", "download_time", "keyword", "language"])
 
         for lang in ["Python", "JavaScript"]:
-            lang_files_needed = NUM_FILES_PER_LANG - collected[lang]
-            if lang_files_needed <= 0:
-                continue
 
             while collected[lang] < NUM_FILES_PER_LANG:
+
                 random.shuffle(KEYWORDS)
 
                 for kw in KEYWORDS:
@@ -78,6 +88,7 @@ def collect_files():
                     files_downloaded = 0
 
                     while files_downloaded < FILES_PER_KEYWORD:
+
                         files = search_files(f"{kw} language:{lang}", per_page=50, page=page)
                         if not files:
                             break
@@ -95,21 +106,29 @@ def collect_files():
                                 content_hash = hashlib.md5(content.encode()).hexdigest()
                                 if content_hash in seen_hashes:
                                     continue
+
                                 seen_hashes.add(content_hash)
 
                                 repo_safe = repo_name.replace("/", "_")
                                 local_name = f"{repo_safe}_{path.split('/')[-1]}"
                                 save_path = os.path.join(OUTPUT_DIR, local_name)
+
                                 with open(save_path, "w", encoding="utf-8") as f:
                                     f.write(content)
 
-                                writer.writerow([local_name, repo_url, path, content_hash,
-                                                 round(time.time() - start_time, 2), kw, lang])
+                                writer.writerow([
+                                    local_name, repo_url, path,
+                                    content_hash,
+                                    round(time.time() - start_time, 2),
+                                    kw, lang
+                                ])
+
                                 collected[lang] += 1
                                 files_downloaded += 1
-                                print(f"[+] Saved {local_name} ({collected[lang]}/{NUM_FILES_PER_LANG}) [{kw}] [{lang}]")
 
-                                if collected[lang] >= NUM_FILES_PER_LANG or files_downloaded >= FILES_PER_KEYWORD:
+                                print(f"[+] Saved {local_name} ({collected[lang]}) [{kw}] [{lang}]")
+
+                                if files_downloaded >= FILES_PER_KEYWORD:
                                     break
 
                             except Exception:
@@ -123,6 +142,44 @@ def collect_files():
 
     total_time = round(time.time() - start_time, 2)
     print(f"\n✅ Done! Collected Python: {collected['Python']} | JavaScript: {collected['JavaScript']} in {total_time}s")
+
+
+# ==========================================================
+# 🌍 NEW FUNCTION — FOR STREAMLIT GITHUB REPO ANALYSIS
+# ==========================================================
+
+def fetch_github_repo_code(repo_url):
+    """
+    Fetch all Python files from a public GitHub repository
+    and combine them into one string.
+    """
+
+    try:
+        parts = repo_url.rstrip("/").split("/")
+        owner = parts[-2]
+        repo = parts[-1]
+
+        api_url = f"https://api.github.com/repos/{owner}/{repo}/contents"
+
+        response = requests.get(api_url)
+        if response.status_code != 200:
+            return None
+
+        files = response.json()
+        combined_code = ""
+
+        for file in files:
+            if file["type"] == "file" and file["name"].endswith(".py"):
+                file_response = requests.get(file["download_url"])
+                if file_response.status_code == 200:
+                    combined_code += file_response.text + "\n\n"
+
+        return combined_code if combined_code else None
+
+    except Exception as e:
+        print("GitHub Fetch Error:", e)
+        return None
+
 
 if __name__ == "__main__":
     collect_files()
